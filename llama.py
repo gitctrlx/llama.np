@@ -1,14 +1,12 @@
-from __future__ import annotations
-
 import math
 import sys
 import time
-from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
 from tokenizer import Tokenizer
+from config import LlamaConfig
 
 
 def softmax(x: np.ndarray) -> np.ndarray:
@@ -18,6 +16,11 @@ def softmax(x: np.ndarray) -> np.ndarray:
 
 def silu(x: np.ndarray) -> np.ndarray:
     return x * (1 / (1 + np.exp(-x)))
+
+
+def swiglu(x: np.ndarray, gate: np.ndarray) -> np.ndarray:
+    swish = gate * (1 / (1 + np.exp(-gate)))
+    return x * swish
 
 
 def rotate_half(x: np.ndarray) -> np.ndarray:
@@ -48,28 +51,6 @@ def repeat_kv(x: np.ndarray, n_rep: int) -> np.ndarray:
     )
 
 
-@dataclass
-class LlamaConfig:
-    hidden_size: int = 288
-    num_hidden_layers: int = 6
-    num_attention_heads: int = 6
-    num_key_value_heads: Optional[int] = None
-    head_dim: Optional[int] = None
-    intermediate_size: int = 768  # Adjust based on model; inferred or set accordingly
-    vocab_size: int = 32000
-    max_position_embeddings: int = 256
-    rms_norm_eps: float = 1e-6
-    rope_theta: float = 10000.0
-    max_batch_size: int = 1
-    hidden_act: str = "silu"
-
-    def __post_init__(self):
-        if self.num_key_value_heads is None:
-            self.num_key_value_heads = self.num_attention_heads
-        if self.head_dim is None:
-            self.head_dim = self.hidden_size // self.num_attention_heads
-
-
 class LlamaRMSNorm:
     def __init__(self, weight: np.ndarray, eps: float):
         self.weight = weight
@@ -87,10 +68,18 @@ class LlamaRotaryEmbedding:
     def __init__(self, config: LlamaConfig):
         head_dim = config.head_dim
         max_seq_len = config.max_position_embeddings
-        theta = config.rope_theta
+        rope_theta = config.rope_theta
+        rope_scaling = config.rope_scaling
+
+        if rope_scaling and rope_scaling["type"] == "linear":
+            scaling_factor = rope_scaling.get("factor", 1.0)
+            max_seq_len = int(max_seq_len * scaling_factor)
+        elif rope_scaling and rope_scaling["type"] == "dynamic":
+            # Dynamic scaling: Simplified placeholder; implement runtime adjustment if needed
+            pass
 
         inv_freq = 1.0 / (
-            theta ** (np.arange(0, head_dim, 2, dtype=np.float32) / head_dim)
+            rope_theta ** (np.arange(0, head_dim, 2, dtype=np.float32) / head_dim)
         )
         t = np.arange(max_seq_len, dtype=np.float32)
         freqs = np.outer(t, inv_freq)
@@ -105,13 +94,21 @@ class LlamaMLP:
         gate_proj_weight: np.ndarray,
         up_proj_weight: np.ndarray,
         down_proj_weight: np.ndarray,
+        hidden_act: str,
     ):
         self.gate_proj = gate_proj_weight.T
         self.up_proj = up_proj_weight.T
         self.down_proj = down_proj_weight.T
+        self.hidden_act = hidden_act
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
-        gate = silu(x @ self.gate_proj)
+        gate = x @ self.gate_proj
+        if self.hidden_act == "swiglu":
+            gate = swiglu(x, gate)
+        elif self.hidden_act == "silu":
+            gate = silu(gate)
+        else:
+            raise ValueError(f"Unsupported hidden_act: {self.hidden_act}")
         up = x @ self.up_proj
         ff = gate * up
         return ff @ self.down_proj
@@ -214,6 +211,7 @@ class LlamaDecoderLayer:
             weights[f"{prefix}mlp.gate_proj.weight"],
             weights[f"{prefix}mlp.up_proj.weight"],
             weights[f"{prefix}mlp.down_proj.weight"],
+            hidden_act=config.hidden_act,
         )
         self.input_layernorm = LlamaRMSNorm(
             weights[f"{prefix}input_layernorm.weight"], eps=config.rms_norm_eps
@@ -299,9 +297,12 @@ class LlamaForCausalLM:
 
 
 if __name__ == "__main__":
-    config = LlamaConfig()
+    # Example: Use LLaMA-1 7B config
+    config = get_llama3_8b_config()
     tokenizer = Tokenizer("./tokenizer.np")
-    model = LlamaForCausalLM("./stories15M.npz", config)
+    model = LlamaForCausalLM(
+        "./stories15M.npz", config
+    )  # Replace with actual model path
 
     prompt = sys.argv[1] if len(sys.argv) > 1 else "I have a dream"
     print(f"\n{prompt}", end="", flush=True)
