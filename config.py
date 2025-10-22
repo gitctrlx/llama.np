@@ -79,3 +79,18 @@ def get_llama3_8b_config():
         rope_theta=500000.0,
         rope_scaling={"type": "linear", "factor": 1.0},
     )
+
+
+def get_toy_stories15m_config():
+    return LlamaConfig(
+        vocab_size=32000,
+        hidden_size=288,
+        intermediate_size=768,
+        num_hidden_layers=6,
+        num_attention_heads=6,
+        num_key_value_heads=6,
+        max_position_embeddings=256,
+        hidden_act="silu",
+        rope_theta=10000.0,
+        max_batch_size=1,
+    )

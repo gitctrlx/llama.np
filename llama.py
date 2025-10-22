@@ -6,7 +6,7 @@ from typing import Optional
 import numpy as np
 
 from tokenizer import Tokenizer
-from config import LlamaConfig
+from config import LlamaConfig, get_toy_stories15m_config
 
 
 def softmax(x: np.ndarray) -> np.ndarray:
@@ -298,7 +298,7 @@ class LlamaForCausalLM:
 
 if __name__ == "__main__":
     # Example: Use LLaMA-1 7B config
-    config = get_llama3_8b_config()
+    config = get_toy_stories15m_config()
     tokenizer = Tokenizer("./tokenizer.np")
     model = LlamaForCausalLM(
         "./stories15M.npz", config
